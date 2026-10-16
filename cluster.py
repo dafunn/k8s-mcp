@@ -19,6 +19,7 @@ from kubernetes.client import ApiClient
 from kubernetes.dynamic import DynamicClient
 
 import kinds
+from errors import ErrorText
 import settings
 
 _dyn: DynamicClient | None = None
@@ -165,7 +166,7 @@ def _accessible_namespaces() -> list[str]:
     )
 
 
-def _resolve_namespaces(pattern: str) -> list[str] | str:
+def _resolve_namespaces(pattern: str) -> list[str] | ErrorText:
     """The namespaces a pattern selects, or an error string.
 
     Three forms: empty or `*` is everything accessible, a glob like `team*` is
@@ -180,10 +181,10 @@ def _resolve_namespaces(pattern: str) -> list[str] | str:
     try:
         candidates = _accessible_namespaces()
     except Exception as e:  # noqa: BLE001
-        return f"Error listing namespaces: {e}"
+        return ErrorText(f"Error listing namespaces: {e}")
     matched = [n for n in candidates if fnmatch.fnmatchcase(n, pattern)]
     if not matched:
-        return (
+        return ErrorText(
             f"Error: no namespace matches '{pattern}'. "
             f"Visible: {', '.join(candidates) or '(none)'}"
         )
@@ -216,10 +217,10 @@ def _ambiguous(kind: str, name: str, hits: list[tuple[str, dict]], pattern: str)
     return "\n".join(lines)
 
 
-def _not_found(kind: str, name: str, namespaces: list[str], pattern: str) -> str:
+def _not_found(kind: str, name: str, namespaces: list[str], pattern: str) -> ErrorText:
     if len(namespaces) == 1:
-        return f"Error: no {kind} named '{name}' in namespace '{namespaces[0]}'."
-    return (
+        return ErrorText(f"Error: no {kind} named '{name}' in namespace '{namespaces[0]}'.")
+    return ErrorText(
         f"Error: no {kind} named '{name}' in the {len(namespaces)} namespaces "
         f"matching '{pattern}': {', '.join(namespaces)}"
     )

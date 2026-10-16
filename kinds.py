@@ -7,6 +7,7 @@ a changed flag.
 
 from __future__ import annotations
 
+from errors import ErrorText
 import settings
 
 # Keys are lowercase aliases (singular + plural); values are (api_version, Kind).
@@ -52,25 +53,25 @@ _GATED_KINDS = {
 _CLUSTER_SCOPED_KINDS = {"Node", "Namespace", "NodeMetrics"}
 
 
-def _check_ns(namespace: str) -> str | None:
+def _check_ns(namespace: str) -> ErrorText | None:
     """Return an error string if namespace is not in the allowlist, else None."""
     if settings.ALLOWED_NAMESPACES is not None and namespace not in settings.ALLOWED_NAMESPACES:
-        return f"Error: namespace '{namespace}' is not in the allowed set"
+        return ErrorText(f"Error: namespace '{namespace}' is not in the allowed set")
     return None
 
 
-def _resolve_kind(kind: str) -> tuple[str, str] | str:
+def _resolve_kind(kind: str) -> tuple[str, str] | ErrorText:
     """Map a user kind string to (api_version, Kind), or an error string."""
     key = kind.strip().lower()
     if key in _REFUSED_KINDS:
-        return f"Error: kind '{kind}' is not readable on this instance (blocked)"
+        return ErrorText(f"Error: kind '{kind}' is not readable on this instance (blocked)")
     if key in _GATED_KINDS and key not in KIND_MAP:
-        return (
+        return ErrorText(
             f"Error: kind '{kind}' is not enabled on this instance "
             f"(set {_GATED_KINDS[key]}=true to allow it)"
         )
     if key not in KIND_MAP:
-        return (
+        return ErrorText(
             f"Error: unknown or unsupported kind '{kind}'. "
             f"Supported: {', '.join(sorted({v[1] for v in KIND_MAP.values()}))}"
         )

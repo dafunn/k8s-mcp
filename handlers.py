@@ -1,8 +1,9 @@
 """One function per tool, each returning the text the caller sees.
 
 Each handler checks scope, resolves the kind, fetches, and hands the result to
-`formatting`. Refusals are returned as text rather than raised, so the caller
-sees the reason. Imports settings/kinds/cluster/formatting; nothing imports back.
+`formatting`. Refusals are returned as `ErrorText` rather than raised, so the
+caller sees the reason and call_tool marks the result as an error. Imports
+settings/kinds/cluster/formatting/errors; nothing imports back.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from typing import Any
 import yaml
 
 import cluster
+from errors import ErrorText
 import formatting
 import kinds
 import settings
@@ -25,7 +27,7 @@ def _handle_namespaces() -> str:
         items = res.get().to_dict().get("items", [])
         return "\n".join(i.get("metadata", {}).get("name", "?") for i in items)
     except Exception as e:  # noqa: BLE001
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
 
 
 def _node_field_selector(k8s_kind: str, node: str) -> str | None:
@@ -51,7 +53,7 @@ def _handle_list(kind: str, namespace: str, label_selector: str = "", node: str 
     try:
         field_selector = _node_field_selector(k8s_kind, node)
     except ValueError as e:
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
 
     if namespace in ("", "*"):
         return _handle_list_all_namespaces(api_version, k8s_kind, label_selector, node)
@@ -103,7 +105,7 @@ def _handle_list(kind: str, namespace: str, label_selector: str = "", node: str 
             out += f"\n[TRUNCATED - showing first {settings.LIST_MAX_ITEMS}. Narrow with label_selector.]"
         return out
     except Exception as e:  # noqa: BLE001
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
 
 
 def _handle_list_all_namespaces(
@@ -115,14 +117,14 @@ def _handle_list_all_namespaces(
     never a cluster-wide call.
     """
     if settings.ALLOWED_NAMESPACES is not None and k8s_kind in kinds._CLUSTER_SCOPED_KINDS:
-        return (
+        return ErrorText(
             f"Error: kind '{k8s_kind}' is cluster-scoped and not available "
             "on a namespace-scoped tier"
         )
     try:
         field_selector = _node_field_selector(k8s_kind, node)
     except ValueError as e:
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
     try:
         dyn, _ = cluster._clients()
         res = dyn.resources.get(api_version=api_version, kind=k8s_kind)
@@ -160,7 +162,7 @@ def _handle_list_all_namespaces(
             out += f"\n[TRUNCATED - showing first {settings.LIST_MAX_ITEMS}. Narrow with label_selector.]"
         return out
     except Exception as e:  # noqa: BLE001
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
 
 
 def _extract_path(obj: Any, path: str) -> Any:
@@ -207,7 +209,7 @@ def _handle_get(kind: str, name: str, namespace: str, path: str = "") -> str:
         res = dyn.resources.get(api_version=api_version, kind=k8s_kind)
         hits = cluster._find_in_namespaces(res, name, namespaces)
     except Exception as e:  # noqa: BLE001
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
     if not hits:
         return cluster._not_found(k8s_kind, name, namespaces, namespace)
     if len(hits) > 1:
@@ -218,7 +220,7 @@ def _handle_get(kind: str, name: str, namespace: str, path: str = "") -> str:
         try:
             obj = _extract_path(obj, path)
         except ValueError as e:
-            return f"Error: {e}"
+            return ErrorText(f"Error: {e}")
         if not isinstance(obj, (dict, list)):
             return f"{path}: {obj}"   # a scalar reads better on one line than as a yaml doc
 
@@ -247,7 +249,7 @@ def _handle_describe(kind: str, name: str, namespace: str) -> str:
         res = dyn.resources.get(api_version=api_version, kind=k8s_kind)
         hits = cluster._find_in_namespaces(res, name, namespaces)
     except Exception as e:  # noqa: BLE001
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
     if not hits:
         return cluster._not_found(k8s_kind, name, namespaces, namespace)
     if len(hits) > 1:
@@ -302,7 +304,7 @@ def _handle_events(namespace: str, name: str = "") -> str:
         lines.extend(formatting._format_event_line(e) for e in items)
         return f"=== Events in {namespace} ({len(items)}) ===\n" + "\n".join(lines)
     except Exception as e:  # noqa: BLE001
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
 
 
 def _handle_node_usage(node: str = "") -> str:
@@ -310,7 +312,7 @@ def _handle_node_usage(node: str = "") -> str:
     condition and pressure.
     """
     if settings.ALLOWED_NAMESPACES is not None:
-        return (
+        return ErrorText(
             "Error: node usage is cluster-scoped and not available on a "
             "namespace-scoped tier"
         )
@@ -322,7 +324,7 @@ def _handle_node_usage(node: str = "") -> str:
             else node_res.get().to_dict().get("items", [])
         )
     except Exception as e:  # noqa: BLE001
-        return f"Error reading nodes: {e}"
+        return ErrorText(f"Error reading nodes: {e}")
     try:
         metrics_res = dyn.resources.get(api_version="metrics.k8s.io/v1beta1", kind="NodeMetrics")
         metrics = (
@@ -330,7 +332,7 @@ def _handle_node_usage(node: str = "") -> str:
             else metrics_res.get().to_dict().get("items", [])
         )
     except Exception as e:  # noqa: BLE001
-        return (
+        return ErrorText(
             f"Error reading node metrics: {e}\n"
             "This needs metrics-server installed and read access to "
             "metrics.k8s.io/nodes; node conditions are still available via "
@@ -387,17 +389,17 @@ def _handle_pod_usage(namespace: str = "", name: str = "") -> str:
         namespaces = [namespace]
 
     if name and not namespaces:
-        return "Error: 'namespace' is required when asking for one pod by name"
+        return ErrorText("Error: 'namespace' is required when asking for one pod by name")
 
     try:
         dyn, _ = cluster._clients()
         pod_res = dyn.resources.get(api_version="v1", kind="Pod")
     except Exception as e:  # noqa: BLE001
-        return f"Error reading pods: {e}"
+        return ErrorText(f"Error reading pods: {e}")
     try:
         metrics_res = dyn.resources.get(api_version="metrics.k8s.io/v1beta1", kind="PodMetrics")
     except Exception as e:  # noqa: BLE001
-        return (
+        return ErrorText(
             f"Error reading pod metrics: {e}\n"
             "This needs metrics-server installed and read access to "
             "metrics.k8s.io/pods; k8s_list pods still reports phase, restarts and "
@@ -418,7 +420,7 @@ def _handle_pod_usage(namespace: str = "", name: str = "") -> str:
                 pods.extend(pod_res.get(**kwargs).to_dict().get("items", []))
                 metrics.extend(metrics_res.get(**kwargs).to_dict().get("items", []))
     except Exception as e:  # noqa: BLE001
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
 
     used = {
         (m.get("metadata", {}).get("namespace"), m.get("metadata", {}).get("name")): m
@@ -480,7 +482,7 @@ def _handle_events_all_namespaces(name: str = "") -> str:
         lines.extend(formatting._format_event_line(e, include_namespace=True) for e in items)
         return f"=== Events across all namespaces ({len(items)}) ===\n" + "\n".join(lines)
     except Exception as e:  # noqa: BLE001
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")
 
 
 def _handle_logs(
@@ -506,4 +508,4 @@ def _handle_logs(
             text = "[...truncated to last %d bytes...]\n" % settings.LOG_MAX_BYTES + text
         return text or f"(no log output for {namespace}/{name})"
     except Exception as e:  # noqa: BLE001
-        return f"Error: {e}"
+        return ErrorText(f"Error: {e}")

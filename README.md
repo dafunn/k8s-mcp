@@ -153,6 +153,15 @@ docker build -t <your-registry>/<your-namespace>/k8s-mcp:latest .
 docker push  <your-registry>/<your-namespace>/k8s-mcp:latest
 ```
 
+The server reports its release in the MCP `initialize` result
+(`serverInfo.version`). To stamp it, build from a checkout with tags:
+
+```
+docker build --build-arg K8S_MCP_VERSION=$(git describe --tags --match 'k8s-mcp-v*' | sed 's/^k8s-mcp-v//') .
+```
+
+A build without it reports `dev`.
+
 ## Running locally
 
 ```bash

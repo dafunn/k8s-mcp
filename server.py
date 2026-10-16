@@ -20,6 +20,7 @@ from mcp.types import (
     Tool,
 )
 
+from errors import ErrorText
 import handlers
 import settings
 
@@ -247,7 +248,13 @@ _LOGS_TOOL = Tool(
 
 # -- MCP server -------------------------------------------------------
 
-_server = Server("k8s-mcp")
+def release_version() -> str:
+    """The release this build reports to clients: K8S_MCP_VERSION,
+    stamped into the image from the k8s-mcp-v* tag at build time, else `dev`."""
+    return os.environ.get("K8S_MCP_VERSION", "").strip() or "dev"
+
+
+_server = Server("k8s-mcp", version=release_version())
 
 
 async def list_tools(_ctx: Any, _params: PaginatedRequestParams) -> ListToolsResult:
@@ -259,7 +266,8 @@ async def list_tools(_ctx: Any, _params: PaginatedRequestParams) -> ListToolsRes
 
 async def call_tool(_ctx: Any, params: CallToolRequestParams) -> CallToolResult:
     text = _dispatch(params.name, params.arguments or {})
-    return CallToolResult(content=[TextContent(type="text", text=text)])
+    return CallToolResult(content=[TextContent(type="text", text=text)],
+                          is_error=isinstance(text, ErrorText))
 
 
 # Each handler is registered with its wire method and params model; the runner
@@ -274,19 +282,19 @@ def _dispatch(name: str, args: dict) -> str:
     if name == "k8s_list":
         kind = args.get("kind")
         if not kind:
-            return "Error: 'kind' is required"
+            return ErrorText("Error: 'kind' is required")
         return handlers._handle_list(
             kind, args.get("namespace") or "", args.get("label_selector", ""), args.get("node", "")
         )
     if name == "k8s_get":
         kind, nm, ns = args.get("kind"), args.get("name"), args.get("namespace")
         if not kind or not nm or not ns:
-            return "Error: 'kind', 'name', and 'namespace' are required"
+            return ErrorText("Error: 'kind', 'name', and 'namespace' are required")
         return handlers._handle_get(kind, nm, ns, args.get("path", ""))
     if name == "k8s_describe":
         kind, nm, ns = args.get("kind"), args.get("name"), args.get("namespace")
         if not kind or not nm or not ns:
-            return "Error: 'kind', 'name', and 'namespace' are required"
+            return ErrorText("Error: 'kind', 'name', and 'namespace' are required")
         return handlers._handle_describe(kind, nm, ns)
     if name == "k8s_events":
         return handlers._handle_events(args.get("namespace") or "", args.get("name", ""))
@@ -296,14 +304,14 @@ def _dispatch(name: str, args: dict) -> str:
         return handlers._handle_pod_usage(args.get("namespace") or "", args.get("name", ""))
     if name == "k8s_logs":
         if not settings.EXPOSE_LOGS:
-            return f"Error: tool '{name}' is not enabled on this instance"
+            return ErrorText(f"Error: tool '{name}' is not enabled on this instance")
         nm, ns = args.get("name"), args.get("namespace")
         if not nm or not ns:
-            return "Error: 'name' and 'namespace' are required"
+            return ErrorText("Error: 'name' and 'namespace' are required")
         return handlers._handle_logs(
             nm, ns, args.get("container", ""), int(args.get("tail_lines", 0)), bool(args.get("previous", False))
         )
-    return f"Error: unknown tool '{name}'"
+    return ErrorText(f"Error: unknown tool '{name}'")
 
 
 # -- Entry point ------------------------------------------------------
